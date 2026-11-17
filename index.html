@@ -46,6 +46,16 @@ th{color:var(--muted);font-weight:600}
 .legend{display:flex;gap:16px;color:var(--muted);font-size:13px;margin-top:6px}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
 #out{display:none}
+.clubchips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
+.clubchip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border:1px solid var(--border);border-radius:16px;padding:4px 6px 4px 12px;font-size:14px;font-weight:600}
+.clubchip button{padding:0 7px;border:none;background:transparent;font-size:16px;line-height:1.2;color:var(--muted)}
+.addclub{display:flex;gap:8px}.addclub input{flex:1}
+.ptable td{padding:4px 4px;border-bottom:1px solid var(--border)}
+.ptable th{padding:4px}
+.ptable input,.ptable select{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:7px 8px;min-height:38px}
+.ptable .num{color:var(--muted);width:28px;text-align:right}
+.ptable .del{padding:6px 10px;background:transparent;border:none;color:var(--muted);font-size:18px}
+.ptable select.club{min-width:120px}.ptable select.seed{min-width:62px}
 @media print{body{background:#fff;color:#000}main{max-width:none;padding:0}.noprint,#inputCard,.btns{display:none!important}.card{border:none;padding:0 0 10px;break-inside:avoid}#clubCard{break-before:page}}
 </style>
 </head>
@@ -62,16 +72,34 @@ th{color:var(--muted);font-weight:600}
     </div>
     <div>
       <label for="count">Participants</label>
-      <input id="count" type="number" min="2" max="64" value="10">
+      <input id="count" type="number" min="2" max="64" value="10" inputmode="numeric">
     </div>
   </div>
-  <label for="names">Names <span class="hint">— one per line: Name, Club, Seed. Club and seed are optional. Leave empty to use the number above.</span></label>
-  <textarea id="names" placeholder="Ali, X, 1&#10;Ben&#10;Dev, Y&#10;Raj, X&#10;Sam&#10;Kavi, Y, 2"></textarea>
+
+  <label>Clubs <span class="hint">— add each club once, then pick it for players below</span></label>
+  <div class="clubchips" id="clubChips"></div>
+  <div class="addclub">
+    <input id="newClub" type="text" placeholder="Club name, e.g. Jundokan">
+    <button id="addClub">Add club</button>
+  </div>
+
+  <label style="margin-top:16px">Players <span class="hint">— name is optional; leave club and seed as “–” if not needed</span></label>
+  <div class="scroll"><table id="ptable" class="ptable"></table></div>
+  <div class="btns" style="margin:10px 0 4px">
+    <button id="addRow">+ Add player</button>
+    <button id="pasteToggle">Paste a list</button>
+    <button id="clear">Clear all</button>
+  </div>
+  <div id="pasteBox" style="display:none;margin-top:8px">
+    <label for="names">Paste names <span class="hint">— one per line: Name, Club, Seed</span></label>
+    <textarea id="names" placeholder="Ali, Jundokan, 1&#10;Ben&#10;Dev, Shotokan"></textarea>
+    <div class="btns" style="margin-top:8px"><button id="loadPaste">Load into list</button></div>
+  </div>
+
   <label class="check"><input id="sep" type="checkbox" checked> Keep same-club players apart</label>
   <div class="btns">
     <button class="primary" id="go">Generate draw</button>
     <button id="again">Re-draw (new chits)</button>
-    <button id="clear">Clear names</button>
   </div>
   <div class="err" id="err"></div>
 </section>
@@ -177,29 +205,48 @@ function makeDraw(players,sep){
 const $=id=>document.getElementById(id);
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-function parsePlayers(){
-  const lines=$('names').value.split('\n').map(s=>s.trim()).filter(Boolean);
-  const players=[];
-  if(lines.length){
-    lines.forEach((line,i)=>{
-      const parts=line.split(',').map(s=>s.trim());
-      const seed=parseInt(parts[2],10);
-      players.push({id:i,name:parts[0]||('Player '+(i+1)),club:(parts[1]||'').toUpperCase(),seed:Number.isFinite(seed)?seed:null});
-    });
-    $('count').value=players.length;
-  }else{
-    const n=parseInt($('count').value,10);
-    for(let i=0;i<n;i++)players.push({id:i,name:'Player '+(i+1),club:'',seed:null});
-  }
-  return players;
+let clubs=[],rows=[];
+function blankRow(){return {name:'',club:'',seed:''};}
+function save(){try{localStorage.setItem('drawgen2',JSON.stringify({cat:$('cat').value,clubs:clubs,rows:rows,sep:$('sep').checked}));}catch(e){}}
+function renderClubs(){
+  $('clubChips').innerHTML=clubs.length?clubs.map((c,i)=>'<span class="clubchip">'+esc(c)+'<button data-i="'+i+'" aria-label="Remove '+esc(c)+'">×</button></span>').join(''):'<span class="hint">No clubs yet.</span>';
+  $('clubChips').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    const c=clubs[+b.dataset.i];clubs.splice(+b.dataset.i,1);rows.forEach(r=>{if(r.club===c)r.club='';});renderClubs();renderRows();save();
+  }));
 }
-
+function renderRows(){
+  const seedMax=Math.min(8,rows.length);
+  let h='<tr><th></th><th>Name</th><th>Club</th><th>Seed</th><th></th></tr>';
+  rows.forEach((r,i)=>{
+    let co='<option value="">–</option>'+clubs.map(c=>'<option'+(r.club===c?' selected':'')+'>'+esc(c)+'</option>').join('');
+    let so='<option value="">–</option>';for(let k=1;k<=seedMax;k++)so+='<option'+(String(r.seed)===String(k)?' selected':'')+'>'+k+'</option>';
+    h+='<tr><td class="num">'+(i+1)+'</td><td><input data-i="'+i+'" data-f="name" type="text" placeholder="Player '+(i+1)+'" value="'+esc(r.name)+'"></td><td><select class="club" data-i="'+i+'" data-f="club">'+co+'</select></td><td><select class="seed" data-i="'+i+'" data-f="seed">'+so+'</select></td><td><button class="del" data-i="'+i+'" aria-label="Remove player '+(i+1)+'">×</button></td></tr>';
+  });
+  $('ptable').innerHTML=h;
+  $('ptable').querySelectorAll('input,select').forEach(el=>el.addEventListener(el.tagName==='INPUT'?'input':'change',()=>{rows[+el.dataset.i][el.dataset.f]=el.value;save();}));
+  $('ptable').querySelectorAll('button.del').forEach(b=>b.addEventListener('click',()=>{rows.splice(+b.dataset.i,1);$('count').value=rows.length;renderRows();save();}));
+  $('count').value=rows.length;
+}
+function setCount(n){
+  n=Math.max(0,Math.min(64,n|0));
+  while(rows.length<n)rows.push(blankRow());
+  while(rows.length>n)rows.pop();
+  renderRows();save();
+}
+function addClub(name){
+  name=(name||'').trim();if(!name)return null;
+  const hit=clubs.find(c=>c.toLowerCase()===name.toLowerCase());
+  if(hit)return hit;clubs.push(name);return name;
+}
+function parsePlayers(){
+  return rows.map((r,i)=>({id:i,name:(r.name||'').trim()||('Player '+(i+1)),club:r.club||'',seed:r.seed?parseInt(r.seed,10):null}));
+}
 let last=null;
 function run(){
   $('err').textContent='';
   const players=parsePlayers();
   if(!(players.length>=2&&players.length<=64)){$('err').textContent='Enter between 2 and 64 participants.';$('out').style.display='none';return;}
-  try{localStorage.setItem('drawgen',JSON.stringify({cat:$('cat').value,count:$('count').value,names:$('names').value,sep:$('sep').checked}));}catch(e){}
+  save();
   const d=makeDraw(players,$('sep').checked);last=d;
   if(d.warnings.length)$('err').textContent=d.warnings.join(' ');
   render(d);
@@ -265,7 +312,18 @@ function drawSVG(d){
 
 $('go').addEventListener('click',run);
 $('again').addEventListener('click',run);
-$('clear').addEventListener('click',()=>{$('names').value='';});
+$('clear').addEventListener('click',()=>{rows=[];for(let i=0;i<10;i++)rows.push(blankRow());$('names').value='';renderRows();save();$('out').style.display='none';});
+$('addRow').addEventListener('click',()=>{if(rows.length<64){rows.push(blankRow());renderRows();save();const ins=$('ptable').querySelectorAll('input');if(ins.length)ins[ins.length-1].focus();}});
+$('count').addEventListener('change',()=>setCount(parseInt($('count').value,10)));
+$('addClub').addEventListener('click',()=>{const c=addClub($('newClub').value);if(c){$('newClub').value='';renderClubs();renderRows();save();}});
+$('newClub').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('addClub').click();}});
+$('pasteToggle').addEventListener('click',()=>{const b=$('pasteBox');b.style.display=b.style.display==='none'?'block':'none';});
+$('loadPaste').addEventListener('click',()=>{
+  const lines=$('names').value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length)return;
+  rows=lines.slice(0,64).map(line=>{const p=line.split(',').map(x=>x.trim());const club=p[1]?addClub(p[1]):'';const sd=parseInt(p[2],10);return {name:p[0]||'',club:club||'',seed:Number.isFinite(sd)?String(sd):''};});
+  renderClubs();renderRows();save();$('pasteBox').style.display='none';
+});
+$('cat').addEventListener('input',save);$('sep').addEventListener('change',save);
 function boutText(){
   const cat=$('cat').value.trim();
   const lines=[(cat?cat+' — ':'')+last.N+' participants, '+last.byes+' BYEs, '+(last.N-1)+' bouts'];
@@ -283,7 +341,12 @@ $('copy').addEventListener('click',async()=>{
   try{await navigator.clipboard.writeText(boutText());$('copied').textContent='Copied ✓';}
   catch(e){$('copied').textContent='Copy not allowed here — select the table text instead.';}
 });
-try{const s=JSON.parse(localStorage.getItem('drawgen')||'null');if(s){$('cat').value=s.cat||'';$('count').value=s.count||10;$('names').value=s.names||'';$('sep').checked=s.sep!==false;}}catch(e){}
+(function init(){
+  let st=null;try{st=JSON.parse(localStorage.getItem('drawgen2')||'null');}catch(e){}
+  if(st&&Array.isArray(st.rows)){clubs=st.clubs||[];rows=st.rows;$('cat').value=st.cat||'';$('sep').checked=st.sep!==false;}
+  else{for(let i=0;i<10;i++)rows.push(blankRow());}
+  renderClubs();renderRows();
+})();
 if('serviceWorker' in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{});});}
 </script>
 </body>
